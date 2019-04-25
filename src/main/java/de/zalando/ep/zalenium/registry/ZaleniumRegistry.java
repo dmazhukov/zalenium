@@ -1,6 +1,5 @@
 package de.zalando.ep.zalenium.registry;
 
-import de.zalando.ep.zalenium.dashboard.Dashboard;
 import de.zalando.ep.zalenium.prometheus.ContainerStatusCollectorExports;
 import de.zalando.ep.zalenium.prometheus.TestSessionCollectorExports;
 import net.jcip.annotations.ThreadSafe;
@@ -34,12 +33,13 @@ import io.prometheus.client.Histogram;
 
 import java.net.URL;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -51,9 +51,22 @@ import org.slf4j.MDC;
  * Kernel of the grid. Keeps track of what's happening, what's free/used and assigns resources to
  * incoming requests.
  */
+@SuppressWarnings("WeakerAccess")
 @ThreadSafe
 public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
     private static final Logger LOG = LoggerFactory.getLogger(ZaleniumRegistry.class.getName());
+    private static final Environment defaultEnvironment = new Environment();
+    private static final double[] DEFAULT_TEST_SESSION_LATENCY_BUCKETS =
+            new double[] { 0.5,2.5,5,10,15,20,25,30,35,40,50,60 };
+    // Allows overriding of the test session latency buckets for prometheus
+    private static final String ZALENIUM_TEST_SESSION_LATENCY_BUCKETS = "ZALENIUM_TEST_SESSION_LATENCY_BUCKETS";
+    private static final Histogram seleniumTestSessionStartLatency = Histogram.build()
+            .name("selenium_test_session_start_latency_seconds")
+            .help("The Selenium test session start time latency in seconds.")
+            .buckets(defaultEnvironment.getDoubleArrayEnvVariable(ZALENIUM_TEST_SESSION_LATENCY_BUCKETS, DEFAULT_TEST_SESSION_LATENCY_BUCKETS))
+            .register();
+    private static final Gauge seleniumTestSessionsWaiting = Gauge.build()
+            .name("selenium_test_sessions_waiting").help("The number of Selenium test sessions that are waiting for a container").register();
     // lock for anything modifying the tests session currently running on this
     // registry.
     private final ReentrantLock lock = new ReentrantLock();
@@ -62,26 +75,10 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
     private final ActiveTestSessions activeTestSessions = new ActiveTestSessions();
     private final NewSessionRequestQueue newSessionQueue;
     private final Matcher matcherThread = new Matcher();
-    private final List<RemoteProxy> registeringProxies = new CopyOnWriteArrayList<>();
+    private final Set<RemoteProxy> registeringProxies = ConcurrentHashMap.newKeySet();
     private volatile boolean stop = false;
-    
-    private static final Environment defaultEnvironment = new Environment();
-    
-    private static final double[] DEFAULT_TEST_SESSION_LATENCY_BUCKETS =
-            new double[] { 0.5,2.5,5,10,15,20,25,30,35,40,50,60 };
 
-    // Allows overriding of the test session latency buckets for prometheus
-    private static final String ZALENIUM_TEST_SESSION_LATENCY_BUCKETS = "ZALENIUM_TEST_SESSION_LATENCY_BUCKETS";
-    
-    static final Gauge seleniumTestSessionsWaiting = Gauge.build()
-            .name("selenium_test_sessions_waiting").help("The number of Selenium test sessions that are waiting for a container").register();
-    
-    static final Histogram seleniumTestSessionStartLatency = Histogram.build()
-            .name("selenium_test_session_start_latency_seconds")
-            .help("The Selenium test session start time latency in seconds.")
-            .buckets(defaultEnvironment.getDoubleArrayEnvVariable(ZALENIUM_TEST_SESSION_LATENCY_BUCKETS, DEFAULT_TEST_SESSION_LATENCY_BUCKETS))
-            .register();
-
+    @SuppressWarnings("unused")
     public ZaleniumRegistry() {
         this(null);
     }
@@ -89,20 +86,21 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
     public ZaleniumRegistry(Hub hub) {
         super(hub);
         this.newSessionQueue = new NewSessionRequestQueue();
-        
+
         long minContainers = ZaleniumConfiguration.getDesiredContainersOnStartup();
         long maxContainers = ZaleniumConfiguration.getMaxDockerSeleniumContainers();
-        long timeToWaitToStart = 180000;
-        boolean waitForAvailableNodes = true;
+        long timeToWaitToStart = ZaleniumConfiguration.getTimeToWaitToStart();
+        boolean waitForAvailableNodes = ZaleniumConfiguration.isWaitForAvailableNodes();
+        int maxTimesToProcessRequest = ZaleniumConfiguration.getMaxTimesToProcessRequest();
+        int checkContainersInterval = ZaleniumConfiguration.getCheckContainersInterval();
 
         DockeredSeleniumStarter starter = new DockeredSeleniumStarter();
-        Dashboard.loadTestInformationFromFile();
-        Dashboard.setShutDownHook();
 
-        AutoStartProxySet autoStart = new AutoStartProxySet(false, minContainers, maxContainers, timeToWaitToStart, waitForAvailableNodes, starter, Clock.systemDefaultZone());
+        AutoStartProxySet autoStart = new AutoStartProxySet(false, minContainers, maxContainers, timeToWaitToStart,
+            waitForAvailableNodes, starter, Clock.systemDefaultZone(), maxTimesToProcessRequest, checkContainersInterval);
         proxies = autoStart;
         this.matcherThread.setUncaughtExceptionHandler(new UncaughtExceptionHandler());
-        
+
         new TestSessionCollectorExports(proxies).register();
         new ContainerStatusCollectorExports(autoStart.getStartedContainers()).register();
     }
@@ -126,6 +124,7 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
      * @param hub the {@link Hub} to associate this registry with
      * @return the registry
      */
+    @SuppressWarnings("unused")
     public static GridRegistry newInstance(Hub hub) {
         ZaleniumRegistry registry = new ZaleniumRegistry(hub);
         registry.start();
@@ -214,11 +213,10 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
         // an empty TestSlot list, which doesn't figure into the proxy equivalence check.  Since we want to free up
         // those test sessions, we need to operate on that original object.
         if (proxies.contains(proxy)) {
-            LOG.warn(String.format(
-                    "Cleaning up stale test sessions on the unregistered node %s", proxy));
+            LOG.debug(String.format("Cleaning up stale test sessions on the unregistered node %s", proxy));
 
             final RemoteProxy p = proxies.remove(proxy);
-            p.getTestSlots().forEach(testSlot -> forceRelease(testSlot, SessionTerminationReason.PROXY_REREGISTRATION) );
+            p.getTestSlots().forEach(testSlot -> forceRelease(testSlot, SessionTerminationReason.PROXY_REREGISTRATION));
             p.teardown();
         }
     }
@@ -263,7 +261,6 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
             MDC.clear();
             lock.unlock();
         }
-
     }
 
     /**
@@ -291,16 +288,13 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
         final TestSession session = proxies.getNewSession(handler.getRequest().getDesiredCapabilities());
         final boolean sessionCreated = session != null;
         if (sessionCreated) {
-            String remoteName = "";
-            if (session.getSlot().getProxy() instanceof DockerSeleniumRemoteProxy) {
-                remoteName = ((DockerSeleniumRemoteProxy)session.getSlot().getProxy()).getRegistration().getContainerId();
-            }
+            String remoteName = session.getSlot().getProxy().getId();
             long timeToAssignProxy = System.currentTimeMillis() - handler.getRequest().getCreationTime();
-            LOG.info(String.format("Test session with internal key %s assigned to remote (%s) after %s seconds (%s ms).",
+            LOG.info("Test session with internal key {} assigned to remote ({}) after {} seconds ({} ms).",
                                   session.getInternalKey(),
                                   remoteName,
                                   timeToAssignProxy / 1000,
-                                  timeToAssignProxy));
+                                  timeToAssignProxy);
             seleniumTestSessionStartLatency.observe(timeToAssignProxy / Collector.MILLISECONDS_PER_SECOND);
             seleniumTestSessionsWaiting.dec();
             activeTestSessions.add(session);
@@ -332,13 +326,12 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
         if (internalKey == null) {
             return;
         }
-        final TestSession session1 = activeTestSessions.findSessionByInternalKey(internalKey);
-        if (session1 != null) {
-            release(session1, reason);
+        final TestSession session = activeTestSessions.findSessionByInternalKey(internalKey);
+        if (session != null) {
+            release(session, reason);
             return;
         }
-        LOG.warn("Tried to release session with internal key " + internalKey +
-                " but couldn't find it.");
+        LOG.warn("Tried to release session with internal key {} but couldn't find it.", internalKey);
     }
 
     /**
@@ -349,16 +342,28 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
             return;
         }
 
-    	LOG.info("Registered a node " + proxy);
+    	LOG.debug("Received a node registration request {}", proxy);
 
         try {
             lock.lock();
 
-            removeIfPresent(proxy);
+            /*
+                We don't reuse proxies in a long period, so it is unlikely that a proxy registers twice as an intended
+                behaviour. This creates a race condition when the proxy is trying to register itself several times
+                since it does not get a confirmation from the hub. Nevertheless, this still applies to nodes
+                registered by hand by any user.
+             */
+            if (proxy instanceof DockerSeleniumRemoteProxy) {
+                if (proxies.contains(proxy)) {
+                    LOG.debug("Proxy '{}' is already registered.", proxy);
+                    return;
+                }
+            } else {
+                removeIfPresent(proxy);
+            }
 
             if (registeringProxies.contains(proxy)) {
-                LOG.warn(String.format("Proxy '%s' is already queued for registration.", proxy));
-
+                LOG.debug("Proxy '{}' is already queued for registration.", proxy);
                 return;
             }
 
@@ -374,7 +379,7 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
                 ((RegistrationListener) proxy).beforeRegistration();
             }
         } catch (Throwable t) {
-            LOG.error("Error running the registration listener on " + proxy + ", " + t.getMessage());
+            LOG.error("Error running the registration listener on {}, {}", proxy, t.getMessage());
             t.printStackTrace();
             listenerOk = false;
         }
@@ -387,6 +392,7 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
                     ((SelfHealingProxy) proxy).startPolling();
                 }
                 proxies.add(proxy);
+                LOG.info("Registered a node {}", proxy);
                 fireMatcherStateChanged();
             }
         } finally {
@@ -479,26 +485,22 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
      * @see GridRegistry#getProxyById(String)
      */
     public RemoteProxy getProxyById(String id) {
-        LOG.debug("Getting proxy " + id);
+        LOG.debug("Getting proxy {}", id);
         return proxies.getProxyById(id);
     }
 
-    protected static class UncaughtExceptionHandler implements Thread.UncaughtExceptionHandler {
-        public void uncaughtException(Thread t, Throwable e) {
-            LOG.debug("Matcher thread dying due to unhandled exception.", e);
-        }
-    }
-
     @Override
-    public HttpClient getHttpClient(URL url) {
+    public HttpClient getHttpClient(URL url, int connectionTimeout, int readTimeout) {
         // https://github.com/zalando/zalenium/issues/491
         int maxTries = 3;
         for (int i = 1; i <= maxTries; i++) {
             try {
-                HttpClient client = httpClientFactory.createClient(url);
+                HttpClient client = httpClientFactory.builder()
+                                        .connectionTimeout(Duration.ofSeconds(connectionTimeout))
+                                        .readTimeout(Duration.ofSeconds(readTimeout))
+                                        .createClient(url);
                 if (i > 1) {
-                    String message = String.format("Successfully created HttpClient for url %s, after attempt #%s", url, i);
-                    LOG.warn(message);
+                    LOG.warn("Successfully created HttpClient for url {}, after attempt #{}", url, i);
                 }
                 return client;
             } catch (Exception | AssertionError e) {
@@ -515,6 +517,12 @@ public class ZaleniumRegistry extends BaseGridRegistry implements GridRegistry {
             }
         }
         throw new IllegalStateException(String.format("Something went wrong while creating a HttpClient for url %s", url));
+    }
+
+    protected static class UncaughtExceptionHandler implements Thread.UncaughtExceptionHandler {
+        public void uncaughtException(Thread t, Throwable e) {
+            LOG.debug("Matcher thread dying due to unhandled exception.", e);
+        }
     }
 
     /**

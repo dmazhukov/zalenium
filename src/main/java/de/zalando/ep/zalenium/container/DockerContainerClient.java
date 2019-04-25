@@ -15,6 +15,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import com.google.common.base.Strings;
+import com.spotify.docker.client.AnsiProgressHandler;
+import com.spotify.docker.client.DefaultDockerClient;
+import com.spotify.docker.client.DockerClient;
+import com.spotify.docker.client.LogStream;
 import com.spotify.docker.client.messages.PortBinding;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -23,10 +27,6 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
-import com.spotify.docker.client.AnsiProgressHandler;
-import com.spotify.docker.client.DefaultDockerClient;
-import com.spotify.docker.client.DockerClient;
-import com.spotify.docker.client.LogStream;
 import com.spotify.docker.client.exceptions.ContainerNotFoundException;
 import com.spotify.docker.client.exceptions.DockerException;
 import com.spotify.docker.client.exceptions.DockerRequestException;
@@ -65,12 +65,23 @@ public class DockerContainerClient implements ContainerClient {
     private static final String ZALENIUM_SELENIUM_CONTAINER_MEMORY_LIMIT = "ZALENIUM_SELENIUM_CONTAINER_MEMORY_LIMIT";
 
     private static final Environment defaultEnvironment = new Environment();
-    private static Environment env = defaultEnvironment;
-    /** Number of times to attempt to create a container when the generated name is not unique. */
+    /**
+     * Number of times to attempt to create a container when the generated name is not unique.
+     */
     private static final int NAME_COLLISION_RETRIES = 10;
+    private static Environment env = defaultEnvironment;
+    private static String seleniumContainerCpuLimit;
+    private static String seleniumContainerMemoryLimit;
+    private static String dockerHost;
+    private static AtomicBoolean environmentInitialised = new AtomicBoolean(false);
+
+    static {
+        readConfigurationFromEnvVariables();
+    }
+
     private final Logger logger = LoggerFactory.getLogger(DockerContainerClient.class.getName());
     private final GoogleAnalyticsApi ga = new GoogleAnalyticsApi();
-    private DockerClient dockerClient = new DefaultDockerClient("unix:///var/run/docker.sock");
+    private DockerClient dockerClient = new DefaultDockerClient(dockerHost);
     private String nodeId;
     private String zaleniumNetwork;
     private List<String> zaleniumExtraHosts;
@@ -78,8 +89,6 @@ public class DockerContainerClient implements ContainerClient {
     private Map<String, String> seleniumContainerLabels = new HashMap<>();
     private boolean pullSeleniumImage = false;
     private boolean isZaleniumPrivileged = true;
-    private static String seleniumContainerCpuLimit;
-    private static String seleniumContainerMemoryLimit;
     private ImmutableMap<String, String> storageOpt;
     private AtomicBoolean pullSeleniumImageChecked = new AtomicBoolean(false);
     private AtomicBoolean isZaleniumPrivilegedChecked = new AtomicBoolean(false);
@@ -95,11 +104,42 @@ public class DockerContainerClient implements ContainerClient {
         String memoryLimit = env.getEnvVariable(ZALENIUM_SELENIUM_CONTAINER_MEMORY_LIMIT);
         setSeleniumContainerMemoryLimit(memoryLimit);
 
+        String dockerHost = env.getStringEnvVariable("DOCKER_HOST", "unix:///var/run/docker.sock");
+        setDockerHost(dockerHost);
     }
 
     @VisibleForTesting
     protected static void setEnv(final Environment env) {
         DockerContainerClient.env = env;
+    }
+
+    private static void setDockerHost(String dockerHost) {
+        // https://github.com/spotify/docker-client/issues/946
+        DockerContainerClient.dockerHost = dockerHost.replace("tcp", "http");
+    }
+
+    private static String getSeleniumContainerCpuLimit() {
+        return seleniumContainerCpuLimit;
+    }
+
+    private static void setSeleniumContainerCpuLimit(String seleniumContainerCpuLimit) {
+        DockerContainerClient.seleniumContainerCpuLimit = seleniumContainerCpuLimit;
+    }
+
+    private static String getSeleniumContainerMemoryLimit() {
+        return seleniumContainerMemoryLimit;
+    }
+
+    private static void setSeleniumContainerMemoryLimit(String seleniumContainerMemoryLimit) {
+        DockerContainerClient.seleniumContainerMemoryLimit = seleniumContainerMemoryLimit;
+    }
+
+    private static boolean isNameCollision(Exception e, String containerName) {
+        return e.getMessage().contains("The container name \"" + containerName + "/\" is already in use by container ");
+    }
+
+    private static boolean hasRemainingAttempts(int collisionAttempts) {
+        return collisionAttempts > 0;
     }
 
     @VisibleForTesting
@@ -109,10 +149,6 @@ public class DockerContainerClient implements ContainerClient {
 
     public void setNodeId(String nodeId) {
         this.nodeId = nodeId;
-    }
-
-    static {
-        readConfigurationFromEnvVariables();
     }
 
     private String getContainerId(String zaleniumContainerName, URL remoteUrl) {
@@ -134,10 +170,10 @@ public class DockerContainerClient implements ContainerClient {
                         if (DOCKER_NETWORK_HOST_MODE_NAME.equalsIgnoreCase(networkMode)) {
                             try {
                                 return dockerClient.inspectContainer(container.id())
-                                    .config()
-                                    .exposedPorts()
-                                    .stream()
-                                    .anyMatch(port -> port.equalsIgnoreCase(String.valueOf(remoteUrl.getPort())));
+                                        .config()
+                                        .exposedPorts()
+                                        .stream()
+                                        .anyMatch(port -> port.equalsIgnoreCase(String.valueOf(remoteUrl.getPort())));
                             } catch (DockerException | InterruptedException e) {
                                 logger.debug(nodeId + " Error while getting containerId", e);
                                 ga.trackException(e);
@@ -145,7 +181,7 @@ public class DockerContainerClient implements ContainerClient {
                         }
                         NetworkSettings networkSettings = container.networkSettings();
                         return networkSettings.networks().values().stream()
-                                .anyMatch(network ->  Objects.equals(network.ipAddress(), remoteUrl.getHost()));
+                                .anyMatch(network -> Objects.equals(network.ipAddress(), remoteUrl.getHost()));
                     })
                     .findFirst().map(Container::id).orElse(null);
         } else {
@@ -206,7 +242,7 @@ public class DockerContainerClient implements ContainerClient {
                     DockerClient.ExecCreateParam.attachStdout(), DockerClient.ExecCreateParam.attachStderr(),
                     DockerClient.ExecCreateParam.attachStdin());
             final LogStream output = dockerClient.execStart(execCreation.id());
-            logger.info(String.format("%s %s", nodeId, Arrays.toString(command)));
+            logger.debug(String.format("%s %s", nodeId, Arrays.toString(command)));
             if (waitForExecution) {
                 try {
                     String commandOutput = output.readFully();
@@ -242,39 +278,6 @@ public class DockerContainerClient implements ContainerClient {
             ga.trackException(e);
         }
         return imageName;
-    }
-
-    private static void setSeleniumContainerCpuLimit(String seleniumContainerCpuLimit) {
-        DockerContainerClient.seleniumContainerCpuLimit = seleniumContainerCpuLimit;
-    }
-
-    private static void setSeleniumContainerMemoryLimit(String seleniumContainerMemoryLimit) {
-        DockerContainerClient.seleniumContainerMemoryLimit = seleniumContainerMemoryLimit;
-    }
-
-    private static String getSeleniumContainerCpuLimit() {
-        return seleniumContainerCpuLimit;
-    }
-
-    private static String getSeleniumContainerMemoryLimit() {
-        return seleniumContainerMemoryLimit;
-    }
-
-    public int getRunningContainers(String image) {
-        try {
-            List<Container> containerList = dockerClient.listContainers(withStatusRunning(), withStatusCreated());
-            int numberOfDockerSeleniumContainers = 0;
-            for (Container container : containerList) {
-                if (container.image().contains(image) && !"exited".equalsIgnoreCase(container.state())) {
-                    numberOfDockerSeleniumContainers++;
-                }
-            }
-            return numberOfDockerSeleniumContainers;
-        } catch (InterruptedException | DockerException e) {
-            logger.warn(nodeId + " Error while getting number of running containers", e);
-            ga.trackException(e);
-        }
-        return 0;
     }
 
     public ContainerCreationStatus createContainer(String zaleniumContainerName, String image, Map<String, String> envVars,
@@ -333,7 +336,7 @@ public class DockerContainerClient implements ContainerClient {
         if (!Strings.isNullOrEmpty(cpuLimit)) {
             hostConfigBuilder.nanoCpus(Long.valueOf(cpuLimit));
         }
-        if(!Strings.isNullOrEmpty(memoryLimit)) {
+        if (!Strings.isNullOrEmpty(memoryLimit)) {
             hostConfigBuilder.memory(Long.valueOf(memoryLimit));
         }
 
@@ -400,14 +403,6 @@ public class DockerContainerClient implements ContainerClient {
             ga.trackException(e);
             return new ContainerCreationStatus(false);
         }
-    }
-
-    private static boolean isNameCollision(Exception e, String containerName) {
-        return e.getMessage().contains("The container name \"" + containerName + "/\" is already in use by container ");
-    }
-
-    private static boolean hasRemainingAttempts(int collisionAttempts) {
-        return collisionAttempts > 0;
     }
 
     private String generateContainerName(String zaleniumContainerName) {
@@ -545,8 +540,30 @@ public class DockerContainerClient implements ContainerClient {
 
     @Override
     public void initialiseContainerEnvironment() {
-        // TODO: Move cleanup code from bash to here
+        if (!environmentInitialised.getAndSet(true)) {
+            // Delete any leftover containers from a previous time
+            deleteSeleniumContainers();
+            // Register a shutdown hook to cleanup pods
+            Runtime.getRuntime().addShutdownHook(new Thread(this::deleteSeleniumContainers, "DockerContainerClient shutdown hook"));
+        }
+    }
 
+    private void deleteSeleniumContainers() {
+        logger.info("About to clean up any left over DockerSelenium containers created by Zalenium");
+        String image = DockeredSeleniumStarter.getDockerSeleniumImageName();
+        String zaleniumContainerName = DockeredSeleniumStarter.getContainerName();
+        try {
+            List<Container> containerList = dockerClient.listContainers(withStatusRunning(), withStatusCreated())
+                    .stream().filter(container -> container.image().contains(image)
+                            && container.names().stream().anyMatch(name -> name.contains(zaleniumContainerName)))
+                    .collect(Collectors.toList());
+            containerList.stream()
+                    .parallel()
+                    .forEach(container -> stopContainer(container.id()));
+        } catch (Exception e) {
+            logger.warn(nodeId + " Error while deleting existing DockerSelenium containers", e);
+            ga.trackException(e);
+        }
     }
 
     @Override
@@ -575,13 +592,14 @@ public class DockerContainerClient implements ContainerClient {
 
         if (zaleniumContainerId == null) {
             logger.warn(String.format("Couldn't find selenium container with name or containing: %s, check that the env " +
-                "variable ZALENIUM_CONTAINER_NAME has an appropriate value", zaleniumContainerName));
+                    "variable ZALENIUM_CONTAINER_NAME has an appropriate value", zaleniumContainerName));
         }
         try {
+            String hubIpAddress = DockeredSeleniumStarter.getHubIpAddress();
             ContainerInfo containerInfo = dockerClient.inspectContainer(zaleniumContainerId);
             ImmutableMap<String, AttachedNetwork> networks = containerInfo.networkSettings().networks();
             for (Map.Entry<String, AttachedNetwork> networkEntry : networks.entrySet()) {
-                if (!DEFAULT_DOCKER_NETWORK_NAME.equalsIgnoreCase(networkEntry.getKey())) {
+                if (networkEntry.getValue().ipAddress().equalsIgnoreCase(hubIpAddress)) {
                     zaleniumNetwork = networkEntry.getKey();
                     return zaleniumNetwork;
                 }
@@ -640,12 +658,12 @@ public class DockerContainerClient implements ContainerClient {
         try {
             final ContainerInfo info = dockerClient.inspectContainer(container.getContainerId());
             if (info.state().status().equalsIgnoreCase("exited") || info.state().status().equalsIgnoreCase("dead")) {
-                logger.info("Container {} exited with status {} - it is terminated.", container, info.state().status());
+                logger.debug("Container {} exited with status {} - it is terminated.", container, info.state().status());
                 return true;
             }
             return false;
         } catch (ContainerNotFoundException e) {
-            logger.info("Container {} not found - it is terminated.", container);
+            logger.debug("Container {} not found - it is terminated.", container);
             return true;
         } catch (DockerException | InterruptedException e) {
             logger.warn("Failed to fetch container status [" + container + "].", e);

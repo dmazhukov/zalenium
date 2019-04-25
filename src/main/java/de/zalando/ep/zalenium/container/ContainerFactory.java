@@ -11,10 +11,10 @@ import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 
 public class ContainerFactory {
 
-    private static Supplier<ContainerClient> containerClientGenerator = DockerContainerClient::new;
     private static Supplier<Boolean> isKubernetes = () -> new File("/var/run/secrets/kubernetes.io/serviceaccount/token").canRead();
 
     private static KubernetesContainerClient kubernetesContainerClient;
+    private static Supplier<DockerContainerClient> dockerContainerClient = DockerContainerClient::new;
     
     public static ContainerClient getContainerClient() {
 
@@ -22,8 +22,16 @@ public class ContainerFactory {
             return createKubernetesContainerClient();
         }
         else {
-            return containerClientGenerator.get();
+            return createDockerContainerClient();
         }
+    }
+
+    private static DockerContainerClient createDockerContainerClient() {
+        // We actually need one client per proxy because sometimes the default size of the connection pool in the
+        // DockerClient is not big enough to handle everything when more than 40 proxies are running.
+        DockerContainerClient dockerClient = ContainerFactory.dockerContainerClient.get();
+        dockerClient.initialiseContainerEnvironment();
+        return dockerClient;
     }
     
     private static KubernetesContainerClient createKubernetesContainerClient() {
@@ -43,13 +51,13 @@ public class ContainerFactory {
     }
 
     @VisibleForTesting
-    public static void setContainerClientGenerator(Supplier<ContainerClient> containerClientGenerator) {
-        ContainerFactory.containerClientGenerator = containerClientGenerator;
+    public static void setDockerContainerClient(Supplier<DockerContainerClient> dockerContainerClient) {
+        ContainerFactory.dockerContainerClient = dockerContainerClient;
     }
 
     @VisibleForTesting
-    public static Supplier<ContainerClient> getContainerClientGenerator() {
-        return containerClientGenerator;
+    public static Supplier<DockerContainerClient> getDockerContainerClient() {
+        return dockerContainerClient;
     }
 
     @VisibleForTesting

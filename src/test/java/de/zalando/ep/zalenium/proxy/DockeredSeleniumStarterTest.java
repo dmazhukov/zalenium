@@ -7,6 +7,7 @@ import static org.mockito.Mockito.withSettings;
 
 import de.zalando.ep.zalenium.container.ContainerClient;
 import de.zalando.ep.zalenium.container.ContainerFactory;
+import de.zalando.ep.zalenium.container.DockerContainerClient;
 import de.zalando.ep.zalenium.container.kubernetes.KubernetesContainerClient;
 import de.zalando.ep.zalenium.util.DockerContainerMock;
 import de.zalando.ep.zalenium.util.Environment;
@@ -31,11 +32,12 @@ import java.util.Collection;
 import java.util.TimeZone;
 import java.util.function.Supplier;
 
+@SuppressWarnings("Duplicates")
 @RunWith(value = Parameterized.class)
 public class DockeredSeleniumStarterTest {
 
     private ContainerClient containerClient;
-    private Supplier<ContainerClient> originalDockerContainerClient;
+    private Supplier<DockerContainerClient> originalDockerContainerClient;
     private KubernetesContainerClient originalKubernetesContainerClient;
     private Supplier<Boolean> originalIsKubernetesValue;
     private Supplier<Boolean> currentIsKubernetesValue;
@@ -43,7 +45,7 @@ public class DockeredSeleniumStarterTest {
     public DockeredSeleniumStarterTest(ContainerClient containerClient, Supplier<Boolean> isKubernetes) {
         this.containerClient = containerClient;
         this.currentIsKubernetesValue = isKubernetes;
-        this.originalDockerContainerClient = ContainerFactory.getContainerClientGenerator();
+        this.originalDockerContainerClient = ContainerFactory.getDockerContainerClient();
         this.originalIsKubernetesValue = ContainerFactory.getIsKubernetes();
         this.originalKubernetesContainerClient = ContainerFactory.getKubernetesContainerClient();
     }
@@ -69,7 +71,7 @@ public class DockeredSeleniumStarterTest {
             this.containerClient = KubernetesContainerMock.getMockedKubernetesContainerClient();
             ContainerFactory.setKubernetesContainerClient((KubernetesContainerClient) containerClient);
         } else {
-            ContainerFactory.setContainerClientGenerator(() -> containerClient);
+            ContainerFactory.setDockerContainerClient(() -> (DockerContainerClient) containerClient);
         }
         ContainerFactory.setIsKubernetes(this.currentIsKubernetesValue);
 
@@ -90,7 +92,7 @@ public class DockeredSeleniumStarterTest {
         new JMXHelper().unregister(objectName);
         DockeredSeleniumStarter.restoreEnvironment();
         ZaleniumConfiguration.restoreEnvironment();
-        ContainerFactory.setContainerClientGenerator(originalDockerContainerClient);
+        ContainerFactory.setDockerContainerClient(originalDockerContainerClient);
         ContainerFactory.setIsKubernetes(originalIsKubernetesValue);
         ContainerFactory.setKubernetesContainerClient(originalKubernetesContainerClient);
     }
@@ -101,198 +103,6 @@ public class DockeredSeleniumStarterTest {
         DockeredSeleniumStarter.restoreEnvironment();
         ZaleniumConfiguration.restoreEnvironment();
     }
-
-    /*
-    @Test
-    public void noContainerIsStartedWhenCapabilitiesAreNotSupported() {
-
-        // Non supported desired capability for the test session
-        Map<String, Object> nonSupportedCapability = new HashMap<>();
-        nonSupportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.SAFARI);
-        nonSupportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.MAC);
-        TestSession testSession = spyProxy.getNewSession(nonSupportedCapability);
-
-        Assert.assertNull(testSession);
-        verify(spyProxy, never()).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void noContainerIsStartedWhenPlatformIsNotSupported() {
-        // Non supported desired capability for the test session
-        Map<String, Object> nonSupportedCapability = new HashMap<>();
-        nonSupportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.CHROME);
-        nonSupportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.WINDOWS);
-        TestSession testSession = spyProxy.getNewSession(nonSupportedCapability);
-
-        Assert.assertNull(testSession);
-        verify(spyProxy, never()).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void containerIsStartedWhenChromeCapabilitiesAreSupported() {
-
-        // Supported desired capability for the test session
-        Map<String, Object> supportedCapability = new HashMap<>();
-        supportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.CHROME);
-        supportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.LINUX);
-        TestSession testSession = spyProxy.getNewSession(supportedCapability);
-
-        Assert.assertNull(testSession);
-        verify(spyProxy, timeout(1000).times(1)).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void containerIsStartedWhenScreenResolutionIsProvided() {
-        // Supported desired capability for the test session
-        Dimension customScreenSize = new Dimension(1280, 760);
-        Map<String, Object> supportedCapability = new HashMap<>();
-        supportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.FIREFOX);
-        supportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.ANY);
-        String screenResolution = String.format("%sx%s", customScreenSize.getWidth(), customScreenSize.getHeight());
-        supportedCapability.put("screenResolution", screenResolution);
-        TestSession testSession = spyProxy.getNewSession(supportedCapability);
-        Assert.assertNull(testSession);
-        verify(spyProxy, timeout(1000).times(1)).startDockerSeleniumContainer(timeZone, customScreenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void containerIsStartedWhenResolutionIsProvided() {
-        // Supported desired capability for the test session
-        Dimension customScreenSize = new Dimension(1300, 900);
-        Map<String, Object> supportedCapability = new HashMap<>();
-        supportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.CHROME);
-        supportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.ANY);
-        String screenResolution = String.format("%sx%s", customScreenSize.getWidth(), customScreenSize.getHeight());
-        supportedCapability.put("resolution", screenResolution);
-        TestSession testSession = spyProxy.getNewSession(supportedCapability);
-        Assert.assertNull(testSession);
-        verify(spyProxy, timeout(1000).times(1)).startDockerSeleniumContainer(timeZone, customScreenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void containerIsStartedWhenCustomScreenResolutionIsProvided() {
-        // Supported desired capability for the test session
-        Dimension customScreenSize = new Dimension(1500, 1000);
-        Map<String, Object> supportedCapability = new HashMap<>();
-        supportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.FIREFOX);
-        supportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.ANY);
-        String screenResolution = String.format("%sx%s", customScreenSize.getWidth(), customScreenSize.getHeight());
-        supportedCapability.put("screen-resolution", screenResolution);
-        TestSession testSession = spyProxy.getNewSession(supportedCapability);
-        Assert.assertNull(testSession);
-        verify(spyProxy, timeout(1000).times(1)).startDockerSeleniumContainer(timeZone, customScreenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void containerIsStartedWhenCustomTimeZoneIsProvided() {
-        // Supported desired capability for the test session
-        TimeZone timeZone = TimeZone.getTimeZone("America/Montreal");
-        Map<String, Object> supportedCapability = new HashMap<>();
-        supportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.FIREFOX);
-        supportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.ANY);
-        supportedCapability.put("tz", timeZone.getID());
-        TestSession testSession = spyProxy.getNewSession(supportedCapability);
-        Assert.assertNull(testSession);
-        verify(spyProxy, timeout(1000).times(1)).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void containerIsStartedWhenNegativeResolutionIsProvidedUsingDefaults() {
-        // Supported desired capability for the test session
-        Map<String, Object> supportedCapability = new HashMap<>();
-        supportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.CHROME);
-        supportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.ANY);
-        supportedCapability.put("resolution", "-1300x800");
-        TestSession testSession = spyProxy.getNewSession(supportedCapability);
-        Assert.assertNull(testSession);
-        verify(spyProxy, timeout(1000).times(1)).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void containerIsStartedWhenAnInvalidResolutionIsProvidedUsingDefaults() {
-        // Supported desired capability for the test session
-        Map<String, Object> supportedCapability = new HashMap<>();
-        supportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.CHROME);
-        supportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.ANY);
-        supportedCapability.put("screenResolution", "notAValidScreenResolution");
-        TestSession testSession = spyProxy.getNewSession(supportedCapability);
-        Assert.assertNull(testSession);
-        verify(spyProxy, timeout(1000).times(1)).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void containerIsStartedWhenFirefoxCapabilitiesAreSupported() {
-
-        // Supported desired capability for the test session
-        Map<String, Object> supportedCapability = new HashMap<>();
-        supportedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.FIREFOX);
-        supportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.LINUX);
-        TestSession testSession = spyProxy.getNewSession(supportedCapability);
-
-        Assert.assertNull(testSession);
-        verify(spyProxy, timeout(1000).times(1)).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-    */
-
-    /*
-    @Test
-    public void noContainerIsStartedWhenBrowserCapabilityIsAbsent() {
-        // Browser is absent
-        Map<String, Object> nonSupportedCapability = new HashMap<>();
-        nonSupportedCapability.put(CapabilityType.PLATFORM_NAME, Platform.LINUX);
-        TestSession testSession = spyProxy.getNewSession(nonSupportedCapability);
-
-        Assert.assertNull(testSession);
-        verify(spyProxy, never()).startDockerSeleniumContainer(timeZone, screenSize);
-        verify(spyProxy, never()).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-
-    @Test
-    public void noContainerIsStartedForAlreadyProcessedRequest() {
-        Map<String, Object> requestedCapability = new HashMap<>();
-        requestedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.CHROME);
-        requestedCapability.put(CapabilityType.PLATFORM_NAME, Platform.LINUX);
-        ProcessedCapabilities processedCapabilities = new ProcessedCapabilities(requestedCapability,
-                System.identityHashCode(requestedCapability));
-        DockerSeleniumStarterRemoteProxy.processedCapabilitiesList.add(processedCapabilities);
-        TestSession testSession = spyProxy.getNewSession(requestedCapability);
-        Assert.assertNull(testSession);
-        verify(spyProxy, times(0)).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-
-    @Test
-    public void containerIsStartedForRequestProcessedMoreThan30Times() {
-        Map<String, Object> requestedCapability = new HashMap<>();
-        requestedCapability.put(CapabilityType.BROWSER_NAME, BrowserType.FIREFOX);
-        requestedCapability.put(CapabilityType.PLATFORM_NAME, Platform.LINUX);
-        ProcessedCapabilities processedCapabilities = new ProcessedCapabilities(requestedCapability,
-                System.identityHashCode(requestedCapability));
-        processedCapabilities.setProcessedTimes(31);
-        DockerSeleniumStarterRemoteProxy.processedCapabilitiesList.add(processedCapabilities);
-        TestSession testSession = spyProxy.getNewSession(requestedCapability);
-        Assert.assertNull(testSession);
-        verify(spyProxy, timeout(1000).atLeastOnce()).startDockerSeleniumContainer(timeZone, screenSize);
-    }
-    */
-
 
     /*
         Tests checking the environment variables setup to have a given number of containers on startup
@@ -366,6 +176,7 @@ public class DockeredSeleniumStarterTest {
         int amountOfMaxContainers = 8;
         int screenWidth = 1440;
         int screenHeight = 810;
+        int browserTimeout = 1000;
         String seleniumNodeParams = "-debug";
         TimeZone timeZone = TimeZone.getTimeZone("America/Montreal");
         when(environment.getEnvVariable(ZaleniumConfiguration.ZALENIUM_DESIRED_CONTAINERS))
@@ -380,6 +191,8 @@ public class DockeredSeleniumStarterTest {
                 .thenReturn(timeZone.getID());
         when(environment.getEnvVariable(DockeredSeleniumStarter.SELENIUM_NODE_PARAMS))
                 .thenReturn(seleniumNodeParams);
+        when(environment.getEnvVariable("SEL_BROWSER_TIMEOUT_SECS"))
+                .thenReturn(String.valueOf(browserTimeout));
         when(environment.getIntEnvVariable(any(String.class), any(Integer.class))).thenCallRealMethod();
         when(environment.getStringEnvVariable(any(String.class), any(String.class))).thenCallRealMethod();
         DockeredSeleniumStarter.setEnv(environment);
@@ -393,38 +206,18 @@ public class DockeredSeleniumStarterTest {
         Assert.assertEquals(screenWidth, DockeredSeleniumStarter.getConfiguredScreenSize().getWidth());
         Assert.assertEquals(timeZone.getID(), DockeredSeleniumStarter.getConfiguredTimeZone().getID());
         Assert.assertEquals(seleniumNodeParams, DockeredSeleniumStarter.getSeleniumNodeParameters());
+        Assert.assertEquals(browserTimeout, DockeredSeleniumStarter.getBrowserTimeout());
     }
-    /*
-
-    @Test
-    public void amountOfCreatedContainersIsTheConfiguredOne() throws MalformedObjectNameException {
-        // Mock the environment class that serves as proxy to retrieve env variables
-        Environment environment = mock(Environment.class, withSettings().useConstructor());
-        int amountOfDesiredContainers = 7;
-        when(environment.getEnvVariable(DockerSeleniumStarterRemoteProxy.ZALENIUM_DESIRED_CONTAINERS))
-                .thenReturn(String.valueOf(amountOfDesiredContainers));
-        when(environment.getIntEnvVariable(any(String.class), any(Integer.class))).thenCallRealMethod();
-        DockerSeleniumStarterRemoteProxy.setEnv(environment);
-        DockerSeleniumStarterRemoteProxy.setSleepIntervalMultiplier(0);
-
-        try {
-            ObjectName objectName = new ObjectName("org.seleniumhq.grid:type=RemoteProxy,node=\"http://localhost:30000\"");
-            new JMXHelper().unregister(objectName);
-        } finally {
-            DockerSeleniumStarterRemoteProxy.getNewInstance(request, registry);
-        }
-        registry.add(spyProxy);
-
-        verify(spyProxy, timeout(5000).times(amountOfDesiredContainers))
-                .startDockerSeleniumContainer(timeZone, screenSize, true);
-        Assert.assertEquals(amountOfDesiredContainers, DockerSeleniumStarterRemoteProxy.getDesiredContainersOnStartup());
-    }
-    */
 
     @Test
     public void noNegativeValuesAreAllowedForStartup() {
         ZaleniumConfiguration.setDesiredContainersOnStartup(-1);
         ZaleniumConfiguration.setMaxDockerSeleniumContainers(-1);
+        ZaleniumConfiguration.setTimeToWaitToStart(-10);
+        ZaleniumConfiguration.setWaitForAvailableNodes(true);
+        ZaleniumConfiguration.setMaxTimesToProcessRequest(-10);
+        ZaleniumConfiguration.setCheckContainersInterval(500);
+        DockeredSeleniumStarter.setBrowserTimeout(-100);
         DockeredSeleniumStarter.setConfiguredScreenSize(new Dimension(-1, -1));
         Assert.assertEquals(ZaleniumConfiguration.DEFAULT_AMOUNT_DESIRED_CONTAINERS,
                 ZaleniumConfiguration.getDesiredContainersOnStartup());
@@ -434,6 +227,15 @@ public class DockeredSeleniumStarterTest {
             DockeredSeleniumStarter.getConfiguredScreenSize().getWidth());
         Assert.assertEquals(DockeredSeleniumStarter.DEFAULT_SCREEN_SIZE.getHeight(),
             DockeredSeleniumStarter.getConfiguredScreenSize().getHeight());
+        Assert.assertEquals(ZaleniumConfiguration.DEFAULT_TIME_TO_WAIT_TO_START,
+            ZaleniumConfiguration.getTimeToWaitToStart());
+        Assert.assertEquals(ZaleniumConfiguration.DEFAULT_TIMES_TO_PROCESS_REQUEST,
+            ZaleniumConfiguration.getMaxTimesToProcessRequest());
+        Assert.assertEquals(ZaleniumConfiguration.DEFAULT_CHECK_CONTAINERS_INTERVAL,
+            ZaleniumConfiguration.getCheckContainersInterval());
+        Assert.assertTrue(ZaleniumConfiguration.isWaitForAvailableNodes());
+        Assert.assertEquals(DockeredSeleniumStarter.DEFAULT_SEL_BROWSER_TIMEOUT_SECS,
+                DockeredSeleniumStarter.getBrowserTimeout());
     }
 
 }

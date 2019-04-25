@@ -35,7 +35,7 @@ fi
 
 if [ ${CURRENT_GID} -ne 1000 ]; then
   if [ "${WE_HAVE_SUDO_ACCESS}" == "true" ]; then
-    sudo groupadd --gid ${CURRENT_GID} selgroup
+    sudo groupadd -f --gid ${CURRENT_GID} selgroup
     sudo gpasswd -a $(whoami) selgroup
   fi
 fi
@@ -129,7 +129,7 @@ else
     if [ "${USE_KUBERNETES}" == "false" ]; then
         # Make sure Docker works (with sudo) before continuing
         docker --version
-        sudo docker images elgalu/selenium >/dev/null
+        sudo docker -H ${DOCKER_HOST} images elgalu/selenium >/dev/null
         # Replace the current process with zalenium.sh
         exec sudo --preserve-env ./zalenium.sh "$@"
     else

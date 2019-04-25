@@ -17,6 +17,12 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.attribute.GroupPrincipal;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.UserPrincipal;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -78,15 +84,18 @@ public class CommonProxyUtilities {
         return null;
     }
 
+    public void downloadFile(String fileUrl, String fileNameWithFullPath, String user, String password,
+    boolean authenticate) throws InterruptedException{
+        downloadFile(fileUrl, fileNameWithFullPath, user, password, authenticate, 10);
+    }
+
     /*
         Downloading a file, method adapted from:
         http://code.runnable.com/Uu83dm5vSScIAACw/download-a-file-from-the-web-for-java-files-and-save
      */
-    @SuppressWarnings("ResultOfMethodCallIgnored")
     public void downloadFile(String fileUrl, String fileNameWithFullPath, String user, String password,
-                             boolean authenticate)
+                             boolean authenticate, int maxAttempts)
             throws InterruptedException {
-        int maxAttempts = 10;
         int currentAttempts = 0;
         // Videos are usually not ready right away, we put a little sleep to avoid falling into the catch/retry.
         Thread.sleep(1000 * 5);
@@ -100,6 +109,7 @@ public class CommonProxyUtilities {
                     urlConnection.setRequestProperty("Authorization", basicAuth);
                 }
 
+                urlConnection.setRequestProperty("Accept", "*/*");
                 //Code to download
                 InputStream in = new BufferedInputStream(urlConnection.getInputStream());
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -113,14 +123,14 @@ public class CommonProxyUtilities {
                 in.close();
                 byte[] response = out.toByteArray();
                 File fileToDownload = new File(fileNameWithFullPath);
-                File fileToDownloadFolder = fileToDownload.getParentFile();
-                if (!fileToDownloadFolder.exists()) {
-                    fileToDownloadFolder.mkdirs();
+                if (!Files.exists(fileToDownload.getParentFile().toPath())) {
+                    Files.createDirectory(fileToDownload.getParentFile().toPath());
                 }
                 FileOutputStream fos = new FileOutputStream(fileNameWithFullPath);
                 fos.write(response);
                 fos.close();
                 //End download code
+                setFilePermissions(Paths.get(fileNameWithFullPath));
                 currentAttempts = maxAttempts + 1;
                 LOG.info("File downloaded to " + fileNameWithFullPath);
             } catch (IOException e) {
@@ -139,21 +149,29 @@ public class CommonProxyUtilities {
         }
     }
 
-    @SuppressWarnings("WeakerAccess")
     public String getDateAndTimeFormatted(Date d) {
         DateFormat dateFormat = new SimpleDateFormat("yyyyMMddHHmmssSSS");
         return dateFormat.format(d);
     }
 
-    @SuppressWarnings("WeakerAccess")
     public String getShortDateAndTime(Date d) {
         DateFormat dateFormat = new SimpleDateFormat("dd-MMM HH:mm:ss");
         return dateFormat.format(d);
     }
     
-    @SuppressWarnings("WeakerAccess")
     public Date getDateAndTime(Date d, int addtionalDays) {
         return new Date(d.getTime() + addtionalDays * 86400000);
+    }
+
+    public static void setFilePermissions(Path filePath) throws IOException {
+        if ("root".equalsIgnoreCase(ZaleniumConfiguration.getCurrentUser())) {
+            UserPrincipal hostUid = filePath.getFileSystem()
+                    .getUserPrincipalLookupService().lookupPrincipalByName(ZaleniumConfiguration.getHostUid());
+            Files.setOwner(filePath, hostUid);
+            GroupPrincipal hostGid = filePath.getFileSystem()
+                    .getUserPrincipalLookupService().lookupPrincipalByGroupName(ZaleniumConfiguration.getHostGid());
+            Files.getFileAttributeView(filePath, PosixFileAttributeView.class).setGroup(hostGid);
+        }
     }
 
     private static String readAll(Reader reader) throws IOException {

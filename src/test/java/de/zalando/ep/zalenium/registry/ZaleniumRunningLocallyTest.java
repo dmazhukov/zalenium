@@ -24,9 +24,18 @@ public class ZaleniumRunningLocallyTest {
         GridHubConfiguration gridHubConfiguration = new GridHubConfiguration();
         gridHubConfiguration.registry = ZaleniumRegistry.class.getCanonicalName();
         gridHubConfiguration.port = 4445;
+        ZaleniumConfiguration.setDesiredContainersOnStartup(0);
+        ZaleniumConfiguration.setMaxDockerSeleniumContainers(30);
         Hub hub = new Hub(gridHubConfiguration);
-        // hub.start();
-        // Thread.sleep(1000 * 60 * 60);
+        /*
+        hub.start();
+        try {
+            Thread.sleep(1000 * 60 * 60);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        */
+
     }
 
     @After

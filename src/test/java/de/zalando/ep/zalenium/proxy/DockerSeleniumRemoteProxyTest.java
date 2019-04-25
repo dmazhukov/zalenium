@@ -26,6 +26,8 @@ import javax.management.MalformedObjectNameException;
 import javax.management.ObjectName;
 import javax.servlet.http.HttpServletResponse;
 
+import de.zalando.ep.zalenium.container.DockerContainerClient;
+import de.zalando.ep.zalenium.util.*;
 import org.awaitility.Duration;
 import org.junit.After;
 import org.junit.Assert;
@@ -53,20 +55,16 @@ import de.zalando.ep.zalenium.container.ContainerFactory;
 import de.zalando.ep.zalenium.container.kubernetes.KubernetesContainerClient;
 import de.zalando.ep.zalenium.dashboard.Dashboard;
 import de.zalando.ep.zalenium.dashboard.TestInformation;
-import de.zalando.ep.zalenium.util.CommonProxyUtilities;
-import de.zalando.ep.zalenium.util.DockerContainerMock;
-import de.zalando.ep.zalenium.util.Environment;
-import de.zalando.ep.zalenium.util.KubernetesContainerMock;
-import de.zalando.ep.zalenium.util.TestUtils;
 
 
+@SuppressWarnings("Duplicates")
 @RunWith(value = Parameterized.class)
 public class DockerSeleniumRemoteProxyTest {
 
     private DockerSeleniumRemoteProxy proxy;
     private GridRegistry registry;
     private ContainerClient containerClient;
-    private Supplier<ContainerClient> originalDockerContainerClient;
+    private Supplier<DockerContainerClient> originalDockerContainerClient;
     private KubernetesContainerClient originalKubernetesContainerClient;
     private Supplier<Boolean> originalIsKubernetesValue;
     private Supplier<Boolean> currentIsKubernetesValue;
@@ -77,7 +75,7 @@ public class DockerSeleniumRemoteProxyTest {
     public DockerSeleniumRemoteProxyTest(ContainerClient containerClient, Supplier<Boolean> isKubernetes) {
         this.containerClient = containerClient;
         this.currentIsKubernetesValue = isKubernetes;
-        this.originalDockerContainerClient = ContainerFactory.getContainerClientGenerator();
+        this.originalDockerContainerClient = ContainerFactory.getDockerContainerClient();
         this.originalIsKubernetesValue = ContainerFactory.getIsKubernetes();
         this.originalKubernetesContainerClient = ContainerFactory.getKubernetesContainerClient();
     }
@@ -102,7 +100,7 @@ public class DockerSeleniumRemoteProxyTest {
             this.containerClient = KubernetesContainerMock.getMockedKubernetesContainerClient();
             ContainerFactory.setKubernetesContainerClient((KubernetesContainerClient) containerClient);
         } else {
-            ContainerFactory.setContainerClientGenerator(() -> containerClient);
+            ContainerFactory.setDockerContainerClient(() -> (DockerContainerClient) containerClient);
         }
         ContainerFactory.setIsKubernetes(this.currentIsKubernetesValue);
 
@@ -114,7 +112,7 @@ public class DockerSeleniumRemoteProxyTest {
             // Might be that the object does not exist, it is ok. Nothing to do, this is just a cleanup task.
         }
 
-        registry = new de.zalando.ep.zalenium.util.SimpleRegistry();
+        registry = new SimpleRegistry();
 
         // Creating the configuration and the registration request of the proxy (node)
         RegistrationRequest request = TestUtils.getRegistrationRequestForTesting(40000,
@@ -132,7 +130,7 @@ public class DockerSeleniumRemoteProxyTest {
     public void tearDown() throws MalformedObjectNameException {
         ObjectName objectName = new ObjectName("org.seleniumhq.grid:type=RemoteProxy,node=\"http://localhost:40000\"");
         new JMXHelper().unregister(objectName);
-        ContainerFactory.setContainerClientGenerator(originalDockerContainerClient);
+        ContainerFactory.setDockerContainerClient(originalDockerContainerClient);
         ContainerFactory.setIsKubernetes(originalIsKubernetesValue);
         ContainerFactory.setKubernetesContainerClient(originalKubernetesContainerClient);
         proxy.restoreContainerClient();

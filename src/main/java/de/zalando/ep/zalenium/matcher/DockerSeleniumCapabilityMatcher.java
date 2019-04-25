@@ -11,10 +11,12 @@ import org.slf4j.LoggerFactory;
 
 import de.zalando.ep.zalenium.proxy.DockeredSeleniumStarter;
 
+@SuppressWarnings("WeakerAccess")
 public class DockerSeleniumCapabilityMatcher extends DefaultCapabilityMatcher {
     private static final List<String> ZALENIUM_CUSTOM_CAPABILITIES_NO_PREFIX = Arrays.asList(
             ZaleniumCapabilityType.TEST_NAME_NO_PREFIX,
             ZaleniumCapabilityType.BUILD_NAME_NO_PREFIX,
+            ZaleniumCapabilityType.TEST_FILE_NAME_TEMPLATE_NO_PREFIX,
             ZaleniumCapabilityType.IDLE_TIMEOUT_NO_PREFIX,
             ZaleniumCapabilityType.SCREEN_RESOLUTION_NO_PREFIX,
             ZaleniumCapabilityType.RESOLUTION_NO_PREFIX,
@@ -25,10 +27,6 @@ public class DockerSeleniumCapabilityMatcher extends DefaultCapabilityMatcher {
     private static String chromeVersion = null;
     private static String firefoxVersion = null;
     private final Logger logger = LoggerFactory.getLogger(DockerSeleniumCapabilityMatcher.class.getName());
-
-    public DockerSeleniumCapabilityMatcher() {
-        super();
-    }
 
     @Override
     public boolean matches(Map<String, Object> nodeCapability, Map<String, Object> requestedCapability) {
@@ -129,11 +127,11 @@ public class DockerSeleniumCapabilityMatcher extends DefaultCapabilityMatcher {
         return timeZoneCapabilityMatches;
     }
 
-    static String getChromeVersion() {
+    public static String getChromeVersion() {
       return chromeVersion;
     }
 
-    static String getFirefoxVersion() {
+    public static String getFirefoxVersion() {
       return firefoxVersion;
     }
 }
